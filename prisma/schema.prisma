@@ -1,0 +1,269 @@
+// Axom data model.
+// SQLite for local dev; swap `provider` to "postgresql" for production.
+// Prisma does not support native enums on SQLite, so status/kind fields are
+// strings validated at the application boundary (see src/lib/validation).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime  @default(now())
+
+  sessions  Session[]
+  courses   Course[]
+  documents Document[]
+  reviews   Review[]
+  quizzes   Quiz[]
+  answers   Answer[]
+}
+
+// Server-side session. Token lives in an httpOnly cookie; csrfToken is sent to
+// the client to be echoed back on mutating requests (double-submit pattern).
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  csrfToken String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Course {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  code      String?
+  color     String    @default("#7c6cff")
+  examDate  DateTime?
+  createdAt DateTime  @default(now())
+
+  documents      Document[]
+  knowledgeNodes KnowledgeNode[]
+  knowledgeEdges KnowledgeEdge[]
+  notes          Note[]
+  cards          Card[]
+  quizzes        Quiz[]
+  plans          StudyPlan[]
+
+  @@index([userId])
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  kind        String   @default("notes") // slides | pdf | notes | textbook
+  mimeType    String   @default("text/plain")
+  sizeBytes   Int      @default(0)
+  contentText String   @default("")
+  pageCount   Int      @default(1)
+  status      String   @default("processing") // processing | ready | failed
+  createdAt   DateTime @default(now())
+
+  knowledgeNodes KnowledgeNode[]
+  notes          Note[]
+
+  @@index([courseId])
+  @@index([userId])
+}
+
+// A concept extracted from documents. Importance ~ likelihood of being tested.
+model KnowledgeNode {
+  id         String   @id @default(cuid())
+  courseId   String
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  label      String
+  summary    String   @default("")
+  keyTerms   String   @default("[]") // JSON-encoded string[]
+  importance Float    @default(0.5) // 0..1 exam-likelihood score
+  difficulty Float    @default(0.5) // 0..1 intrinsic difficulty
+  mastery    Float    @default(0)   // 0..1 learner mastery (updated by reviews)
+  sourceRef  String   @default("")  // e.g. "Slide 12" / "p.45"
+  createdAt  DateTime @default(now())
+
+  cards     Card[]
+  questions Question[]
+  edgesFrom KnowledgeEdge[] @relation("edgeFrom")
+  edgesTo   KnowledgeEdge[] @relation("edgeTo")
+
+  @@index([courseId])
+}
+
+// Directed edge in the knowledge graph (prerequisite / related).
+model KnowledgeEdge {
+  id       String @id @default(cuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  fromId   String
+  from     KnowledgeNode @relation("edgeFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toId     String
+  to       KnowledgeNode @relation("edgeTo", fields: [toId], references: [id], onDelete: Cascade)
+  relation String @default("related") // prerequisite | related
+  weight   Float  @default(0.5)
+
+  @@unique([fromId, toId, relation])
+  @@index([courseId])
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  courseId   String
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  title      String
+  style      String   @default("cornell") // cornell | mindmap | eli5 | exam | formal | analogy
+  contentMd  String   @default("")
+  meta       String   @default("{}") // JSON-encoded object
+  createdAt  DateTime @default(now())
+
+  @@index([courseId])
+}
+
+// Spaced-repetition card with SM-2 scheduling state.
+model Card {
+  id          String   @id @default(cuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  nodeId      String?
+  node        KnowledgeNode? @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  front       String
+  back        String
+  kind        String   @default("qa") // qa | cloze | concept
+
+  // SM-2 state
+  easiness    Float    @default(2.5)
+  intervalDays Float   @default(0)
+  repetitions Int      @default(0)
+  lapses      Int      @default(0)
+  dueAt       DateTime @default(now())
+  lastReviewedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  reviews Review[]
+
+  @@index([courseId])
+  @@index([dueAt])
+}
+
+model Review {
+  id           String   @id @default(cuid())
+  cardId       String
+  card         Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grade        Int      // 0..5 SM-2 quality
+  prevInterval Float
+  nextInterval Float
+  reviewedAt   DateTime @default(now())
+
+  @@index([cardId])
+  @@index([userId])
+}
+
+model Quiz {
+  id          String    @id @default(cuid())
+  courseId    String
+  course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  difficulty  String    @default("medium") // easy | medium | hard | exam | trick
+  mode        String    @default("practice") // practice | timed
+  timeLimitSec Int?
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  scorePct    Float?
+
+  questions Question[]
+  answers   Answer[]
+
+  @@index([courseId])
+  @@index([userId])
+}
+
+model Question {
+  id          String  @id @default(cuid())
+  quizId      String
+  quiz        Quiz    @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  nodeId      String?
+  node        KnowledgeNode? @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  type        String  // mcq | short | long | cloze | truefalse | code | case
+  prompt      String
+  options     String  @default("[]") // JSON-encoded string[]
+  answer      String  // canonical answer / key
+  rubric      String  @default("[]") // JSON-encoded keyword rubric for free-text grading
+  explanation String  @default("")
+  difficulty  String  @default("medium")
+  order       Int     @default(0)
+
+  answers Answer[]
+
+  @@index([quizId])
+}
+
+model Answer {
+  id           String   @id @default(cuid())
+  questionId   String
+  question     Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  quizId       String
+  quiz         Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  response     String   @default("")
+  correct      Boolean  @default(false)
+  score        Float    @default(0) // 0..1 partial credit
+  confidence   Int      @default(3) // 1..5 self-rated before reveal
+  timeMs       Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([quizId])
+  @@index([questionId])
+}
+
+model StudyPlan {
+  id        String   @id @default(cuid())
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  examDate  DateTime
+  dailyMinutes Int   @default(60)
+  createdAt DateTime @default(now())
+
+  tasks StudyTask[]
+
+  @@index([courseId])
+}
+
+model StudyTask {
+  id          String   @id @default(cuid())
+  planId      String
+  plan        StudyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  date        DateTime
+  kind        String   // learn | review | practice | exam-sim
+  title       String
+  nodeIds     String   @default("[]") // JSON-encoded string[]
+  durationMin Int      @default(30)
+  status      String   @default("pending") // pending | done | skipped
+  order       Int      @default(0)
+
+  @@index([planId])
+}

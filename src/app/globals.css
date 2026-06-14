@@ -1,0 +1,202 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Axom design system.
+  Near-black neutral canvas, typography-led hierarchy, a single restrained
+  violet accent reserved for focus rings, active states and one hero element.
+  No gradients, no glows, no decorative colour.
+*/
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
+}
+
+:root,
+.dark {
+  --radius: 0.5rem;
+
+  /* zinc-950 canvas */
+  --background: #09090b;
+  --foreground: #fafafa; /* zinc-50 */
+
+  /* zinc-900 surfaces */
+  --card: #131316;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+
+  /* primary = restrained light neutral (used for meters/indicators) */
+  --primary: #e4e4e7; /* zinc-200 */
+  --primary-foreground: #18181b;
+
+  --secondary: #1c1c1f;
+  --secondary-foreground: #fafafa;
+
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa; /* zinc-400 */
+
+  /* neutral hover surface used by menus/inputs */
+  --accent: #27272a; /* zinc-800 */
+  --accent-foreground: #fafafa;
+
+  --destructive: #f87171; /* red-400, used sparingly */
+  --destructive-foreground: #fafafa;
+
+  --border: #27272a; /* zinc-800 */
+  --input: #27272a;
+  --ring: #a78bfa; /* violet-400 */
+
+  /* the single deliberate accent */
+  --brand: #a78bfa; /* violet-400 */
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--brand) 30%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid color-mix(in oklch, var(--brand) 55%, transparent);
+    outline-offset: 2px;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  button:focus-visible {
+    outline: none;
+  }
+}
+
+/*
+  Ultra-subtle film grain for depth — the kind of texture premium dark UIs use.
+  Fixed, non-interactive, and barely there (no glow, no motion).
+*/
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Quiet scrollbars that match the canvas. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 9999px;
+  border: 3px solid var(--background);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Gentle pulse on the review due-count badge — draws attention without glow. */
+@keyframes due-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+.due-pulse {
+  animation: due-pulse 2.4s ease-in-out infinite;
+}
+
+/* Generated-notes prose. Typography-driven, monochrome. */
+.note-body h2,
+.note-body h3 {
+  color: var(--foreground);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.note-body h2 {
+  font-size: 1.05rem;
+  margin: 1.5rem 0 0.5rem;
+}
+.note-body h3 {
+  font-size: 0.95rem;
+  margin: 1.15rem 0 0.35rem;
+}
+.note-body p {
+  color: var(--muted-foreground);
+  margin: 0.5rem 0;
+  line-height: 1.75;
+}
+.note-body ul {
+  margin: 0.5rem 0;
+  padding-left: 1.1rem;
+}
+.note-body li {
+  color: var(--muted-foreground);
+  margin: 0.3rem 0;
+  list-style: disc;
+  line-height: 1.65;
+}
+.note-body code {
+  font-family: var(--font-mono);
+  background: #18181b;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  font-size: 0.85em;
+  color: #d4d4d8;
+}
