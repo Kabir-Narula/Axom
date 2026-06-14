@@ -47,8 +47,12 @@ export function UploadPanel({
         { method: "POST", formData: fd }
       );
       toast(
-        `Processed — ${res.conceptCount} concepts, ${res.cardCount} cards created.`,
-        "success"
+        `Processed — ${res.conceptCount} concept${res.conceptCount === 1 ? "" : "s"}, ${res.cardCount} cards.${
+          res.conceptCount < 4
+            ? " Tip: if this looks low, try re-uploading the PDF."
+            : ""
+        }`,
+        res.conceptCount === 0 ? "info" : "success"
       );
       router.refresh();
     } catch (err) {

@@ -65,10 +65,12 @@ export function TestsPanel({
   courseId,
   quizzes,
   hasConcepts,
+  conceptCount,
 }: {
   courseId: string;
   quizzes: QuizListItem[];
   hasConcepts: boolean;
+  conceptCount: number;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -91,11 +93,19 @@ export function TestsPanel({
     }
     setBusy(true);
     try {
-      const quiz = await api<{ id: string }>("/api/quizzes", {
-        method: "POST",
-        body: { courseId, difficulty, mode, questionCount: count, types },
-      });
-      toast("Test ready.", "success");
+      const quiz = await api<{ id: string; questionCount: number }>(
+        "/api/quizzes",
+        {
+          method: "POST",
+          body: { courseId, difficulty, mode, questionCount: count, types },
+        }
+      );
+      toast(
+        quiz.questionCount < count
+          ? `Test ready with ${quiz.questionCount} of ${count} questions.`
+          : "Test ready.",
+        "success"
+      );
       router.push(`/study/quiz/${quiz.id}`);
     } catch (err) {
       toast(err instanceof ApiClientError ? err.message : "Failed.", "error");
@@ -110,6 +120,19 @@ export function TestsPanel({
         <h3 className="text-sm font-semibold tracking-tight text-foreground">
           Build a practice test
         </h3>
+        {hasConcepts && (
+          <p className="text-sm text-muted-foreground">
+            {conceptCount} concept{conceptCount === 1 ? "" : "s"} mapped from
+            your material.
+            {conceptCount < 4 && (
+              <>
+                {" "}
+                Few concepts were extracted — re-upload your PDF on the Materials
+                tab for better questions.
+              </>
+            )}
+          </p>
+        )}
 
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">

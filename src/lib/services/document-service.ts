@@ -3,6 +3,7 @@ import { documentRepo } from "@/lib/repositories/documents";
 import { knowledgeRepo } from "@/lib/repositories/knowledge";
 import { cardRepo } from "@/lib/repositories/cards";
 import { getAIProvider } from "@/lib/ai";
+import { normalizePdfTextSafe } from "@/lib/pdf-text";
 import type { ConceptContext } from "@/lib/ai/types";
 import { ApiError } from "@/lib/api";
 
@@ -45,8 +46,14 @@ export async function ingestDocument(input: IngestInput): Promise<IngestResult> 
   });
 
   try {
+    const cleaned =
+      input.mimeType === "application/pdf" ||
+      input.title.toLowerCase().endsWith(".pdf")
+        ? normalizePdfTextSafe(input.contentText)
+        : input.contentText;
+
     const ai = getAIProvider();
-    const { concepts, edges } = await ai.extractConcepts(input.contentText, {
+    const { concepts, edges } = await ai.extractConcepts(cleaned, {
       maxConcepts: 24,
     });
 
@@ -84,7 +91,7 @@ export async function ingestDocument(input: IngestInput): Promise<IngestResult> 
       summary: n.summary,
       keyTerms: safeTerms(n.keyTerms),
       difficulty: n.difficulty,
-      sourceText: n.summary,
+      sourceText: cleaned,
     }));
     const cards = await ai.generateCards(contexts);
     const labelToId = idByLabel;

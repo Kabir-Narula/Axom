@@ -134,13 +134,14 @@ export function CourseWorkspace({
               hasConcepts={hasConcepts}
             />
           )}
-          {tab === "tests" && (
-            <TestsPanel
-              courseId={course.id}
-              quizzes={quizzes}
-              hasConcepts={hasConcepts}
-            />
-          )}
+        {tab === "tests" && (
+          <TestsPanel
+            courseId={course.id}
+            quizzes={quizzes}
+            hasConcepts={hasConcepts}
+            conceptCount={concepts.length}
+          />
+        )}
           {tab === "plan" && (
             <PlanPanel
               courseId={course.id}

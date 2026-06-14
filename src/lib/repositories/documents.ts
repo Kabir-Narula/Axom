@@ -40,6 +40,15 @@ export const documentRepo = {
     return prisma.document.update({ where: { id }, data: { status } });
   },
 
+  async getCombinedTextForCourse(courseId: string): Promise<string> {
+    const docs = await prisma.document.findMany({
+      where: { courseId, status: "ready" },
+      select: { contentText: true },
+      orderBy: { createdAt: "asc" },
+    });
+    return docs.map((d) => d.contentText).join("\n\n");
+  },
+
   delete(id: string, userId: string) {
     return prisma.document.deleteMany({ where: { id, userId } });
   },

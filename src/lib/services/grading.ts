@@ -1,4 +1,5 @@
 import { tokenize } from "@/lib/ai/nlp";
+import { buildGradingRubric } from "@/lib/ai/question-sanity";
 
 export interface GradeResult {
   correct: boolean;
@@ -40,14 +41,21 @@ export function gradeAnswer(
     case "code":
     case "case":
     default: {
-      const keywords =
+      const cleanedRubric =
         rubric.length > 0
-          ? rubric.map(normalize)
+          ? buildGradingRubric(answer, rubric)
+          : buildGradingRubric(answer, []);
+      const keywords =
+        cleanedRubric.length > 0
+          ? cleanedRubric.map(normalize)
           : tokenize(answer).slice(0, 6);
       if (keywords.length === 0) {
-        // No rubric available: fall back to lexical overlap with the key.
         const overlap = jaccard(tokenize(response), tokenize(answer));
         return { correct: overlap >= 0.4, score: Math.min(1, overlap * 1.5) };
+      }
+      // Very short answers shouldn't get partial credit from keyword hits.
+      if (res.replace(/\s/g, "").length < 12) {
+        return { correct: false, score: 0 };
       }
       const hits = keywords.filter((k) => k && res.includes(k)).length;
       const score = hits / keywords.length;

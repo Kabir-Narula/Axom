@@ -17,7 +17,10 @@ import {
   normalizeTrueFalsePrompt,
   isValidQuestion,
   isQuestion,
+  buildGradingRubric,
+  pickBestAnswerSentence,
 } from "./question-sanity";
+import { isValidConceptLabel } from "./concept-label";
 import { seededShuffle, seededRandom } from "@/lib/utils";
 import type {
   AIProvider,
@@ -53,15 +56,21 @@ export class HeuristicProvider implements AIProvider {
       if (body.split(/\s+/).length < 6) continue;
 
       const keyTerms = extractKeyphrases(body, 6);
-      const label =
+      const labelRaw =
         cleanLabel(section.heading) ||
         keyTerms[0] ||
         titleCasePhrase(tokenize(body).slice(0, 3).join(" ")) ||
         `Concept ${index}`;
+      const label = isValidConceptLabel(labelRaw)
+        ? labelRaw
+        : keyTerms.find((t) => isValidConceptLabel(t)) ||
+          titleCasePhrase(keyTerms.slice(0, 2).join(" ")) ||
+          `Concept ${index}`;
+      if (!isValidConceptLabel(label)) continue;
 
       const summarySentences = summarize(body, 3);
       const summary = summarySentences.join(" ");
-      if (!summary) continue;
+      if (!summary || summary.length < 40) continue;
 
       concepts.push({
         label: label.slice(0, 120),
@@ -277,21 +286,50 @@ export class HeuristicProvider implements AIProvider {
     opts: { count: number; difficulty: Difficulty; types: QuestionType[] }
   ): Promise<GeneratedQuestion[]> {
     if (concepts.length === 0) return [];
-    const questions: GeneratedQuestion[] = [];
+
     const ranked = [...concepts].sort(
-      (a, b) => b.difficulty + seededRandom(b.label) - (a.difficulty + seededRandom(a.label))
+      (a, b) =>
+        b.difficulty +
+        seededRandom(b.label) -
+        (a.difficulty + seededRandom(a.label))
     );
 
-    let i = 0;
-    const maxAttempts = ranked.length * opts.types.length * 4;
-    while (questions.length < opts.count && i < maxAttempts) {
-      const concept = ranked[i % ranked.length];
-      const type = opts.types[i % opts.types.length];
-      i += 1;
-      const q = this.makeQuestion(concept, type, opts.difficulty, concepts);
-      if (q && isValidQuestion(q)) questions.push(q);
+    const seen = new Set<string>();
+    const add = (q: GeneratedQuestion | null, out: GeneratedQuestion[]) => {
+      if (!q || !isValidQuestion(q)) return;
+      const key = `${q.type}:${q.prompt.slice(0, 80).toLowerCase()}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(q);
+    };
+
+    const fill = (
+      types: QuestionType[],
+      target: number,
+      out: GeneratedQuestion[]
+    ) => {
+      let i = 0;
+      const maxAttempts = Math.max(target * 12, ranked.length * types.length * 6);
+      while (out.length < target && i < maxAttempts) {
+        const concept = ranked[i % ranked.length];
+        const type = types[i % types.length];
+        i += 1;
+        add(this.makeQuestion(concept, type, opts.difficulty, concepts), out);
+      }
+    };
+
+    const out: GeneratedQuestion[] = [];
+    fill(opts.types, opts.count, out);
+
+    // Not enough? Fall back to reliable types that work with any concept count.
+    if (out.length < opts.count) {
+      fill(["mcq", "short", "truefalse"], opts.count, out);
     }
-    return questions.slice(0, opts.count);
+    if (out.length < opts.count) {
+      fill(["short", "long"], opts.count, out);
+    }
+
+    return out.slice(0, opts.count);
   }
 
   private makeQuestion(
@@ -300,25 +338,35 @@ export class HeuristicProvider implements AIProvider {
     difficulty: Difficulty,
     all: ConceptContext[]
   ): GeneratedQuestion | null {
-    const def = summarize(concept.summary, 1)[0] ?? concept.summary;
+    const def = pickBestAnswerSentence(concept.summary, concept.label);
+    const rubric = buildGradingRubric(def, concept.keyTerms);
     const base = {
       difficulty,
       conceptLabel: concept.label,
-      rubric: concept.keyTerms.slice(0, 5).map((t) => t.toLowerCase()),
+      rubric,
     };
 
     switch (type) {
       case "mcq": {
-        const distractors = seededShuffle(
-          all.filter((c) => c.label !== concept.label),
-          concept.label
-        )
+        const others = all.filter((c) => c.label !== concept.label);
+        let distractors = seededShuffle(others, concept.label)
           .slice(0, 3)
-          .map((c) => clip(summarize(c.summary, 1)[0] ?? c.summary, 120));
-        if (distractors.length < 2) return null;
+          .map((c) => clip(summarize(c.summary, 1)[0] ?? c.summary, 120))
+          .filter((d) => d.length > 10);
+
+        // With only 1–2 concepts, synthesize plausible wrong options.
+        while (distractors.length < 3) {
+          const synth = syntheticMcqDistractor(
+            concept,
+            distractors.length,
+            def
+          );
+          if (!distractors.includes(synth)) distractors.push(synth);
+        }
+
         const correct = clip(def, 120);
         const options = seededShuffle(
-          [correct, ...distractors],
+          [correct, ...distractors.slice(0, 3)],
           concept.label + "opts"
         );
         return {
@@ -373,26 +421,42 @@ export class HeuristicProvider implements AIProvider {
           explanation: `The missing term is "${term}". ${def}`,
         };
       }
-      case "short":
+      case "short": {
+        const promptLabel = isValidConceptLabel(concept.label)
+          ? concept.label
+          : concept.keyTerms.find((t) => isValidConceptLabel(t)) ?? "this concept";
+        const answer =
+          pickBestAnswerSentence(concept.summary, promptLabel) ||
+          summarize(concept.summary, 2).join(" ");
+        if (answer.length < 30 || isQuestion(answer)) return null;
+        const terms = rubric.length
+          ? rubric
+          : buildGradingRubric(answer, concept.keyTerms);
         return {
           ...base,
           type: "short",
-          prompt: `In 2–3 sentences, explain ${concept.label}.`,
+          prompt: `In 2–3 sentences, explain ${promptLabel}.`,
           options: [],
-          answer: def,
-          explanation: `A strong answer covers: ${concept.keyTerms.join(", ") || def}.`,
+          answer,
+          explanation: `A strong answer covers: ${terms.join(", ") || "the core ideas from the material"}.`,
         };
-      case "long":
+      }
+      case "long": {
+        const promptLabel = isValidConceptLabel(concept.label)
+          ? concept.label
+          : concept.keyTerms.find((t) => isValidConceptLabel(t)) ?? "this topic";
+        const terms = rubric.slice(0, 3);
         return {
           ...base,
           type: "long",
-          prompt: `Discuss ${concept.label} in depth. Address: ${
-            concept.keyTerms.slice(0, 3).join(", ") || "its core ideas"
+          prompt: `Discuss ${promptLabel} in depth. Address: ${
+            terms.join(", ") || "its core ideas"
           }, and explain why it matters.`,
           options: [],
           answer: concept.summary,
-          explanation: `Cover these points: ${concept.keyTerms.join(", ") || def}.`,
+          explanation: `Cover these points: ${terms.join(", ") || def}.`,
         };
+      }
       case "code":
         return {
           ...base,
@@ -422,25 +486,53 @@ export class HeuristicProvider implements AIProvider {
     studentAnswer: string;
     conceptSummary: string;
   }): Promise<MicroLesson> {
-    const correctTerms = new Set(tokenize(input.correctAnswer + " " + input.conceptSummary));
+    const trimmed = input.studentAnswer.trim();
+    const blank = trimmed.length === 0;
+    const tooShort = trimmed.length > 0 && trimmed.length < 12;
+
+    if (blank || tooShort) {
+      return {
+        diagnosis: blank
+          ? "You left this blank — that usually means the concept hasn't moved into recall memory yet."
+          : "That's too short to evaluate. Short-answer questions need a few sentences in your own words.",
+        explanation: pickBestAnswerSentence(
+          input.conceptSummary || input.correctAnswer
+        ),
+        tip: "Start with a clear definition, then add one example or reason it matters.",
+      };
+    }
+
+    const rubricTerms = buildGradingRubric(
+      input.correctAnswer,
+      tokenize(input.conceptSummary).slice(0, 8)
+    );
+    const correctTerms = new Set([
+      ...rubricTerms,
+      ...tokenize(input.correctAnswer).filter((t) => t.length > 4),
+    ]);
     const studentTerms = new Set(tokenize(input.studentAnswer));
-    const missing = [...correctTerms].filter((t) => !studentTerms.has(t)).slice(0, 5);
-    const extra = [...studentTerms].filter((t) => !correctTerms.has(t)).slice(0, 4);
+    const missing = [...correctTerms]
+      .filter((t) => !studentTerms.has(t))
+      .slice(0, 5);
+    const extra = [...studentTerms]
+      .filter((t) => !correctTerms.has(t) && t.length > 4)
+      .slice(0, 4);
 
-    const blank = input.studentAnswer.trim().length === 0;
-
-    const diagnosis = blank
-      ? "You left this blank — that usually means the concept hasn't moved into recall memory yet. Recognizing it isn't the same as being able to produce it."
-      : missing.length
-        ? `Your answer missed key ideas: ${missing.join(", ")}. This suggests you grasped part of the picture but not the connections that make it complete.`
-        : extra.length
+    const diagnosis =
+      missing.length >= 2
+        ? `Your answer missed key ideas: ${missing.join(", ")}. Try connecting the definition to a concrete example from the material.`
+        : extra.length >= 2
           ? `You included ideas (${extra.join(", ")}) that aren't central here — a sign of mixing this concept up with a neighbouring one.`
           : "Your answer was close. The gap is in precision rather than understanding.";
 
+    const explanation = pickBestAnswerSentence(
+      input.conceptSummary || input.correctAnswer
+    );
+
     return {
       diagnosis,
-      explanation: input.conceptSummary || input.correctAnswer,
-      tip: missing.length
+      explanation,
+      tip: missing.length >= 2
         ? `Re-study with these anchors in mind: ${missing.join(", ")}. Then try to re-explain it out loud (the Feynman technique).`
         : "Try explaining this concept from scratch without looking — if you can teach it simply, you own it.",
     };
@@ -448,6 +540,19 @@ export class HeuristicProvider implements AIProvider {
 }
 
 // ---- helpers ----
+
+function syntheticMcqDistractor(
+  concept: ConceptContext,
+  index: number,
+  def: string
+): string {
+  const templates = [
+    `${concept.label} is unrelated to the main ideas in this material.`,
+    `${concept.label} only applies in hypothetical cases, not real scientific practice.`,
+    clip(negate(def), 120),
+  ];
+  return templates[index % templates.length];
+}
 
 function cleanLabel(heading: string): string {
   return heading

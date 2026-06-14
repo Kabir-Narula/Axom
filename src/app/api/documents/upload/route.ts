@@ -1,6 +1,7 @@
 import { route, ok, ApiError } from "@/lib/api";
 import { DOC_KINDS } from "@/lib/validation";
 import { ingestDocument } from "@/lib/services/document-service";
+import { normalizePdfTextSafe, extractPdfText } from "@/lib/pdf-text";
 
 const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 const ALLOWED = new Set([
@@ -48,13 +49,9 @@ export const POST = route(
 
     if (isPdf) {
       try {
-        const { extractText, getDocumentProxy } = await import("unpdf");
-        const pdf = await getDocumentProxy(buffer);
-        const result = await extractText(pdf, { mergePages: true });
-        contentText = Array.isArray(result.text)
-          ? result.text.join("\n")
-          : result.text;
-        pageCount = result.totalPages || 1;
+        const extracted = await extractPdfText(buffer);
+        contentText = extracted.text;
+        pageCount = extracted.pageCount;
       } catch {
         throw new ApiError(
           422,
@@ -66,6 +63,9 @@ export const POST = route(
     }
 
     contentText = contentText.replace(/\u0000/g, "").trim();
+    if (isPdf) {
+      contentText = normalizePdfTextSafe(contentText);
+    }
     if (contentText.length < 20) {
       throw new ApiError(
         422,

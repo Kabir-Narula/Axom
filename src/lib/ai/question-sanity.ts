@@ -1,4 +1,5 @@
-import { splitSentences } from "./nlp";
+import { splitSentences, tokenize, isTransitionalSentence, pickBestAnswerSentence } from "./nlp";
+import { isValidConceptLabel } from "./concept-label";
 import type { GeneratedQuestion } from "./types";
 import type { QuestionType } from "@/lib/validation";
 
@@ -80,6 +81,16 @@ export function isValidQuestion(q: GeneratedQuestion): boolean {
     if (!q.options.includes(q.answer)) return false;
   }
 
+  if (q.type === "short" || q.type === "long" || q.type === "case") {
+    if (q.answer.length < 30) return false;
+    if (isQuestion(q.answer)) return false;
+    if (isTransitionalSentence(q.answer)) return false;
+    const labelMatch = q.prompt.match(
+      /(?:explain|discuss|describe|define)\s+(.+?)[\.\?]?$/i
+    );
+    if (labelMatch && !isValidConceptLabel(labelMatch[1].trim())) return false;
+  }
+
   return true;
 }
 
@@ -118,3 +129,136 @@ export function coerceQuestionTypeForText(
   if (type === "truefalse" && isQuestion(text)) return "short";
   return type;
 }
+
+/** Build grading keywords from answer text and extracted terms — skip noise. */
+export function buildGradingRubric(answer: string, keyTerms: string[]): string[] {
+  const fromTerms = keyTerms
+    .map((t) => t.toLowerCase().trim())
+    .filter((t) => t.length > 3 && !RUBRIC_STOP.has(t));
+  if (fromTerms.length >= 2) return fromTerms.slice(0, 5);
+
+  return tokenize(answer)
+    .filter((t) => t.length > 3 && !RUBRIC_STOP.has(t))
+    .slice(0, 6);
+}
+
+const RUBRIC_STOP = new Set([
+  "find",
+  "look",
+  "example",
+  "field",
+  "section",
+  "chapter",
+  "see",
+  "also",
+  "well",
+  "like",
+  "just",
+  "get",
+  "go",
+  "come",
+  "take",
+  "make",
+  "way",
+  "part",
+  "one",
+  "two",
+  "three",
+  "first",
+  "second",
+  "third",
+  "next",
+  "then",
+  "now",
+  "here",
+  "there",
+  "this",
+  "that",
+  "these",
+  "those",
+  "will",
+  "would",
+  "could",
+  "should",
+  "might",
+  "must",
+  "shall",
+  "can",
+  "may",
+  "let",
+  "try",
+  "use",
+  "using",
+  "used",
+  "work",
+  "works",
+  "working",
+  "scientific",
+  "science",
+  "research",
+  "generally",
+  "community",
+  "investigations",
+  "checklist",
+  "inspires",
+  "familiar",
+  "material",
+  "course",
+  "study",
+  "learn",
+  "learning",
+  "students",
+  "people",
+  "things",
+  "ideas",
+  "idea",
+  "process",
+  "method",
+  "methods",
+  "different",
+  "similar",
+  "related",
+  "important",
+  "main",
+  "major",
+  "common",
+  "basic",
+  "simple",
+  "complex",
+  "real",
+  "actual",
+  "true",
+  "false",
+  "new",
+  "old",
+  "many",
+  "much",
+  "some",
+  "other",
+  "another",
+  "several",
+  "various",
+  "certain",
+  "particular",
+  "specific",
+  "general",
+  "overall",
+  "whole",
+  "entire",
+  "full",
+  "complete",
+  "simply",
+  "basically",
+  "typically",
+  "usually",
+  "often",
+  "sometimes",
+  "always",
+  "never",
+  "psychology",
+  "physics",
+  "chemistry",
+  "biology",
+]);
+
+export { pickBestAnswerSentence };

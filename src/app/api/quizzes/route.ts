@@ -13,7 +13,10 @@ export const POST = route(
       questionCount: input.questionCount,
       types: input.types,
     });
-    return ok({ id: quiz.id }, { status: 201 });
+    return ok(
+      { id: quiz.id, questionCount: quiz.questions.length },
+      { status: 201 }
+    );
   },
   { rateLimit: { limit: 20, windowMs: 60_000 } }
 );

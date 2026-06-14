@@ -7,6 +7,8 @@
  * detection (used to estimate what a professor is likely to test).
  */
 
+import { isPdfNoiseLine } from "@/lib/pdf-text";
+
 export const STOPWORDS = new Set(
   `a about above after again against all am an and any are aren't as at be because been before being below between both but by can't cannot could couldn't did didn't do does doesn't doing don't down during each few for from further had hadn't has hasn't have haven't having he he'd he'll he's her here here's hers herself him himself his how how's i i'd i'll i'm i've if in into is isn't it it's its itself let's me more most mustn't my myself no nor not of off on once only or other ought our ours ourselves out over own same shan't she she'd she'll she's should shouldn't so some such than that that's the their theirs them themselves then there there's these they they'd they'll they're they've this those through to too under until up very was wasn't we we'd we'll we're we've were weren't what what's when when's where where's which while who who's whom why why's with won't would wouldn't you you'd you'll you're you've your yours yourself yourselves also using used use e.g i.e etc within may might one two will shall must many much may'`.split(
     /\s+/
@@ -61,21 +63,29 @@ export function splitSections(text: string): { heading: string; body: string }[]
 
   const isHeading = (line: string) => {
     const t = line.trim();
-    if (!t || t.length > 80) return false;
+    if (!t || t.length > 80 || isPdfNoiseLine(t)) return false;
+    if (/understandingscience|photo credit/i.test(t)) return false;
+    // Transitional / fragment lines are not section headings.
+    if (
+      /^(beyond|in|to|from|for|with|about|into|through|while|when|where|how|what|why|who|which|although|however|because|since|until|as|at|by|on|of|the|and|or|but|so|if|then|now|here|there|this|that|let|we|you|they|also|just|like|well|see|look|find|generally|typically|usually|often|sometimes|less|more|most|some|any|all|each|every|both|either|neither|such|same|other|another|first|second|third|next|finally)\b/i.test(
+        t
+      )
+    )
+      return false;
     // Markdown heading, numbered heading, ALL CAPS, or Title Case short line.
     if (/^#{1,6}\s+/.test(t)) return true;
     if (/^(\d+[.)]|chapter|section|topic|unit|lecture|slide)\b/i.test(t))
       return true;
-    if (/^[A-Z0-9][A-Za-z0-9 ,&/'-]{2,70}$/.test(t) && !/[.!?]$/.test(t)) {
+    if (/^[A-Z0-9][A-Za-z0-9 ,&/'-:]{2,70}$/.test(t) && !/[.!?]$/.test(t)) {
       const words = t.split(/\s+/);
-      if (words.length <= 9) return true;
+      if (words.length <= 9 && words.length >= 2) return true;
     }
     return false;
   };
 
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line) continue;
+    if (!line || isPdfNoiseLine(line)) continue;
     if (isHeading(line)) {
       if (current && current.body.trim()) sections.push(current);
       current = { heading: line.replace(/^#{1,6}\s+/, "").trim(), body: "" };
@@ -173,10 +183,165 @@ export function extractKeyphrases(text: string, limit = 8): string[] {
   const kept: string[] = [];
   for (const [phrase] of sorted) {
     if (kept.length >= limit) break;
+    if (isGarbageKeyphrase(phrase)) continue;
     if (kept.some((k) => k.includes(phrase) && k !== phrase)) continue;
     kept.push(phrase);
   }
   return kept.map(titleCasePhrase);
+}
+
+const GENERIC_KEYPHRASE_WORDS = new Set([
+  "scientific",
+  "science",
+  "research",
+  "generally",
+  "line",
+  "inspires",
+  "checklist",
+  "community",
+  "investigations",
+  "familiar",
+  "less",
+  "more",
+  "example",
+  "field",
+  "section",
+  "chapter",
+  "material",
+  "course",
+  "study",
+  "studies",
+  "understanding",
+  "understand",
+  "learn",
+  "learning",
+  "students",
+  "people",
+  "things",
+  "ideas",
+  "idea",
+  "work",
+  "works",
+  "working",
+  "process",
+  "processes",
+  "method",
+  "methods",
+  "part",
+  "parts",
+  "way",
+  "ways",
+  "form",
+  "forms",
+  "type",
+  "types",
+  "kind",
+  "kinds",
+  "different",
+  "similar",
+  "related",
+  "important",
+  "main",
+  "major",
+  "minor",
+  "common",
+  "basic",
+  "simple",
+  "complex",
+  "real",
+  "actual",
+  "true",
+  "false",
+  "new",
+  "old",
+  "first",
+  "second",
+  "third",
+  "next",
+  "many",
+  "much",
+  "some",
+  "other",
+  "another",
+  "several",
+  "various",
+  "certain",
+  "particular",
+  "specific",
+  "general",
+  "overall",
+  "whole",
+  "entire",
+  "full",
+  "complete",
+  "entirely",
+  "simply",
+  "basically",
+  "typically",
+  "usually",
+  "often",
+  "sometimes",
+  "always",
+  "never",
+]);
+
+/** Drop PDF-extraction noise that masquerades as key terms. */
+export function isGarbageKeyphrase(phrase: string): boolean {
+  const words = phrase.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 4) return true;
+  if (words.length >= 2 && new Set(words).size < words.length) return true;
+  const genericHits = words.filter((w) => GENERIC_KEYPHRASE_WORDS.has(w)).length;
+  if (genericHits >= 2) return true;
+  if (words.length <= 2 && genericHits >= 1 && words.every((w) => GENERIC_KEYPHRASE_WORDS.has(w)))
+    return true;
+  return false;
+}
+
+/** Prefer definitional sentences over rhetorical or transitional ones. */
+export function pickBestAnswerSentence(text: string, conceptLabel?: string): string {
+  const sentences = splitSentences(text);
+  if (sentences.length === 0) return text.trim();
+
+  const labelHint = conceptLabel?.toLowerCase().slice(0, 12) ?? "";
+  const scored = sentences.map((sentence, i) => {
+    let score = 0;
+    const lower = sentence.toLowerCase();
+    const wc = sentence.split(/\s+/).length;
+
+    if (isTransitionalSentence(sentence)) score -= 12;
+    if (sentence.trim().endsWith("?")) score -= 10;
+    if (/^(what|why|how|when|where|who|would|could|should|can|do|does|did)\b/i.test(sentence.trim()))
+      score -= 8;
+    if (/\b(is|are|was|were|refers to|means|defined as|involves|includes|describes|helps|allows|requires|consists|comprises|represents|provides|forms|builds|creates|supports|tests|explains|demonstrates|shows|leads to|results in)\b/i.test(lower))
+      score += 6;
+    if (labelHint && lower.includes(labelHint)) score += 4;
+    if (wc >= 10 && wc <= 40) score += 3;
+    if (wc < 8) score -= 4;
+    if (wc > 50) score -= 3;
+    // Early sentences in a summary often carry the topic statement.
+    score += Math.max(0, (sentences.length - i) / sentences.length) * 1.5;
+
+    return { sentence, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (best && best.score > -4) return best.sentence;
+
+  const fallback = sentences.find(
+    (s) => !isTransitionalSentence(s) && !s.trim().endsWith("?")
+  );
+  return fallback ?? sentences[0] ?? text.trim();
+}
+
+export function isTransitionalSentence(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  return (
+    /^(to find out|we('ll| will)|let('s| us)|in this (section|chapter|part|example)|as we (will|shall)|now we|consider the following|for example|look at|take a look|turn to|go to|see also|in order to|so that|this (section|chapter|page)|the following|below we|above we|here we|next we|first we|then we|finally we|in the next|on the next|at this point|at the end|at the beginning|as mentioned|as discussed|as noted|as shown|as described|as explained|as illustrated|as seen|as expected|as you|if you|when you|before we|after we|while we|since we|because we|although we|however we|therefore we|thus we|hence we|so we|but we|and we|or we|yet we|still we|even we|only we|just we|also we|well we|now let's|let us|we can|we could|we should|we must|we need|we want|we have|we are|we were|we do|we did|we don't|we didn't|we won't|we wouldn't|we can't|we couldn't|we haven't|we hadn't|we're|we've|we'd|we'll)\b/i.test(
+      t
+    ) || t.endsWith("...")
+  );
 }
 
 /** Extractive summary: rank sentences by TF-IDF mass + position + cue words. */

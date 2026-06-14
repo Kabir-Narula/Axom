@@ -49,6 +49,12 @@ export async function generateQuiz(input: {
   if (questions.length === 0) {
     throw new ApiError(500, "Could not generate questions from this material.");
   }
+  if (questions.length < Math.min(3, input.questionCount)) {
+    throw new ApiError(
+      400,
+      `Only ${questions.length} question${questions.length === 1 ? "" : "s"} could be built from ${contexts.length} concept${contexts.length === 1 ? "" : "s"}. Re-upload your PDF (Materials tab) so Axom can re-extract concepts, or add more material.`
+    );
+  }
 
   const nodes = await knowledgeRepo.listByCourse(input.courseId);
   const nodeIdByLabel = new Map(nodes.map((n) => [n.label.toLowerCase(), n.id]));
